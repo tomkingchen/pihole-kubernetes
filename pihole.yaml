@@ -1,0 +1,211 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pihole-dns
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local
+  namespace: pihole-dns
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pihole-local-etc-volume
+  namespace: pihole-dns
+  labels:
+    directory: etc
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: local
+  local:
+    path: /etc/vol/piholeetc
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - tom-lab3
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pihole-local-etc-claim
+  namespace: pihole-dns
+spec:
+  storageClassName: local
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  selector:
+    matchLabels:
+      directory: etc
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pihole-local-dnsmasq-volume
+  namespace: pihole-dns
+  labels:
+    directory: dnsmasq.d
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: local
+  local:
+    path: /etc/vol/piholednsmasq
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - tom-lab3
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pihole-local-dnsmasq-claim
+  namespace: pihole-dns
+spec:
+  storageClassName: local
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Mi
+  selector:
+    matchLabels:
+      directory: dnsmasq.d
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pihole
+  labels:
+    app: pihole
+  namespace: pihole-dns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pihole
+  template:
+    metadata:
+      labels:
+        app: pihole
+    spec:
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+          - 127.0.0.1
+          - 1.1.1.1
+      containers:
+      - name: pihole
+        image: pihole/pihole:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: TZ
+          value: "Australia/Melbourne"
+        - name: WEBPASSWORD
+          value: shouldbechangedafterwards
+        - name: ServerIP
+          value: 10.1.1.20
+        ports:
+        - containerPort: 80
+          name: pihole-http
+          protocol: TCP
+        - containerPort: 53
+          name: dns
+          protocol: TCP
+        - containerPort: 53
+          name: dns-udp
+          protocol: UDP
+        - containerPort: 443
+          name: pihole-ssl
+          protocol: TCP
+        - containerPort: 67
+          name: client-udp
+          protocol: UDP
+        volumeMounts:
+        - name: pihole-local-etc-volume
+          mountPath: "/etc/pihole"
+        - name: pihole-local-dnsmasq-volume
+          mountPath: "/etc/dnsmasq.d"
+        securityContext:
+          capabilities:        
+            add:
+              - NET_ADMIN
+      restartPolicy: Always
+      volumes:
+      - name: pihole-local-etc-volume
+        persistentVolumeClaim:
+          claimName: pihole-local-etc-claim
+      - name: pihole-local-dnsmasq-volume
+        persistentVolumeClaim:
+          claimName: pihole-local-dnsmasq-claim
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: pihole
+  name: pihole-udp
+  namespace: pihole-dns 
+spec:
+  ports:
+  - name: dns-udp
+    port: 53
+    protocol: UDP
+    targetPort: 53
+  - name: client-udp
+    port: 67
+    protocol: UDP
+    targetPort: 67
+  selector:
+    app: pihole
+  externalTrafficPolicy: Local
+  loadBalancerIP: 10.1.1.20
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: pihole
+  name: pihole
+  namespace: pihole-dns 
+spec:
+  ports:
+  - name: pihole-http
+    port: 80
+    protocol: TCP
+    targetPort: 80
+  - name: pihole-https
+    port: 443
+    protocol: TCP
+    targetPort: 443
+  - name: dns
+    port: 53
+    protocol: TCP
+    targetPort: 53
+  selector:
+    app: pihole
+  externalTrafficPolicy: Local
+  loadBalancerIP: 10.1.1.19
+  type: LoadBalancer
